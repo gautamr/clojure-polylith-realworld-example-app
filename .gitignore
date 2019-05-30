@@ -1,0 +1,11 @@
+**/.idea/**
+**/target/**
+database.db
+.nrepl-port
+.lein-failures
+test.db
+**/*.iml
+**/pom.xml
+.polylith/time.edn
+.polylith/git.edn
+artifacts/**

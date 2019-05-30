@@ -1,0 +1,153 @@
+version: 2.0
+
+jobs:
+  compile:
+    docker:
+      - image: circleci/clojure:lein-2.8.1
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - realworld-backend-{{ checksum "project.clj" }}-{{ checksum "environments/development/project.clj" }}
+            - realworld-backend-
+      - restore_cache:
+          keys:
+            - polylith-cache-
+      - run:
+          name: Print workspace info
+          command: lein polylith info
+      - run:
+          name: Compile changed projects
+          command: lein polylith compile
+      - save_cache:
+          key: realworld-backend-{{ checksum "project.clj" }}-{{ checksum "environments/development/project.clj" }}
+          paths:
+            - /home/circleci/.m2
+            - /home/circleci/.lein
+      - persist_to_workspace:
+          root: /home/circleci
+          paths:
+            - .m2
+            - .lein
+            - realworld-backend
+
+  test:
+    docker:
+      - image: circleci/clojure:lein-2.8.1
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Test changed projects
+          command: lein polylith test -sync -compile
+
+  api-test:
+    docker:
+      - image: circleci/clojure:lein-2.8.1-node
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Run realworld backend
+          command: lein ring server-headless
+          working_directory: /home/circleci/realworld-backend/environments/development
+          background: true
+      - run:
+          name: Wait for backend to initialize
+          command: wget --retry-connrefused --waitretry=10 --read-timeout=20 --timeout=15 -t 30 http://localhost:6003/api/health
+      - run:
+          name: Run api tests
+          command: APIURL=http://localhost:6003/api ./run-api-tests.sh
+          working_directory: /home/circleci/realworld-backend/environments/development/api-tests
+
+  build:
+    docker:
+      - image: circleci/clojure:lein-2.8.1
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Build changed projects
+          command: lein polylith build -sync -compile -test -success
+      - persist_to_workspace:
+          root: /home/circleci
+          paths:
+            - realworld-backend
+
+  artifacts:
+    machine:
+      enabled: true
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Find built systems, print to console and move to artifacts
+          command: |
+            mkdir -p artifacts
+
+            built_systems=`lein polylith changes s`
+
+            echo $built_systems
+
+            for system in $built_systems; do
+              artifact="systems/""$system""/target/""$system"".war"
+              cp $artifact artifacts/.
+            done
+      - store_artifacts:
+          path: artifacts
+          destination: artifacts
+      - persist_to_workspace:
+          root: /home/circleci
+          paths:
+            - realworld-backend
+
+  success:
+    docker:
+      - image: circleci/clojure:lein-2.8.1
+    working_directory: /home/circleci/realworld-backend
+    steps:
+      - attach_workspace:
+          at: /home/circleci
+      - run:
+          name: Set new :last-success
+          command: lein polylith success
+      - save_cache:
+          key: polylith-cache-{{ checksum ".polylith/git.edn" }}
+          paths:
+            - /home/circleci/realworld-backend/.polylith
+
+workflows:
+  version: 2
+  test-build-success:
+    jobs:
+      - compile
+      - test:
+          requires:
+            - compile
+      - api-test:
+          requires:
+            - test
+      - build:
+          requires:
+            - api-test
+      - artifacts:
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - master
+                - develop
+      - success:
+          requires:
+            - artifacts
+          filters:
+            branches:
+              only:
+                - master
+                - develop

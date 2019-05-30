@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo 'Creating symlinks; this is a hack to work with CodeBuild!'
+      - echo 'https://forums.aws.amazon.com/thread.jspa?threadID=245780'
+      - tree
+  pre_build:
+    commands:
+      - lein polylith info
+      - lein polylith compile
+  build:
+    commands:
+      - lein polylith test -sync -compile
+      - lein polylith build -sync -compile -test -success
+  post_build:
+    commands:
+      - echo Entered the post_build phase...
+      - lein polylith success
+cache:
+  paths:
+    - '/root/.m2/**/*'
